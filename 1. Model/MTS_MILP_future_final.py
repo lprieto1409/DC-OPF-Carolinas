@@ -8,21 +8,23 @@ model = AbstractModel()
 ######=================================================########
 
 ### Generators by fuel-type
-model.Coal = Set()
 model.Oil = Set()
 model.Gas = Set()
 model.Hydro = Set()
 model.Solar = Set()
+model.Wind = Set()
 model.Nuc = Set()
 
 #all generators
-model.Dispatchable = model.Coal | model.Oil | model.Gas
-model.Generators = model.Dispatchable | model.Solar | model.Hydro | model.Nuc
-
+model.Dispatchable = model.Oil | model.Gas
+model.Generators = model.Dispatchable | model.Solar | model.Wind | model.Hydro | model.Nuc
 
 # transmission sets
 model.lines = Set() 
 model.buses = Set()
+
+# Batteries
+model.Batteries = Set()
 
 #Generator type
 model.typ = Param(model.Generators,within=Any)
@@ -57,11 +59,19 @@ model.minup = Param(model.Generators)
 #Minimun down time
 model.mindn = Param(model.Generators)
 
+# Battery parameters
+model.node_bat = Param(model.Batteries, within=Any)
+model.bat_cap = Param(model.Batteries)
+model.bat_RoC = Param(model.Batteries)
+model.bat_RoD = Param(model.Batteries)
+model.bat_eff = Param(model.Batteries)
 
+# Overall parameters
 model.Reactance = Param(model.lines)
 model.FlowLim = Param(model.lines)
 model.LinetoBusMap=Param(model.lines,model.buses)
 model.BustoUnitMap=Param(model.Generators,model.buses)
+model.BustoStoMap = Param(model.Batteries,model.buses)
 
 ######=================================================########
 ######               Segment B.5                       ########
@@ -96,8 +106,6 @@ model.SimLineLimit = Param(model.lines*model.SH_periods, within=NonNegativeReals
 #Horizon demand
 model.HorizonLineLimit = Param(model.lines*model.hh_periods,within=NonNegativeReals,mutable=True,initialize=0)
 
-
-
 #Reserve for the entire system
 # model.SimReserves = Param(model.SH_periods, within=NonNegativeReals)
 # model.HorizonReserves = Param(model.hh_periods, within=NonNegativeReals,mutable=True)
@@ -105,14 +113,14 @@ model.HorizonLineLimit = Param(model.lines*model.hh_periods,within=NonNegativeRe
 ##Variable resources over simulation period
 model.SimHydro = Param(model.Hydro, model.SH_periods, within=NonNegativeReals)
 model.SimSolar = Param(model.Solar, model.SH_periods, within=NonNegativeReals)
-model.SimNuc = Param(model.Nuc, model.SH_periods, within=NonNegativeReals)
-
+model.SimWind = Param(model.Wind, model.SH_periods, within=NonNegativeReals)
+model.SimNuc =  Param(model.Nuc, model.SH_periods, within=NonNegativeReals)
 
 #Variable resources over horizon
 model.HorizonHydro = Param(model.Hydro,model.hh_periods,within=NonNegativeReals,mutable=True)
 model.HorizonSolar = Param(model.Solar,model.hh_periods,within=NonNegativeReals,mutable=True)
+model.HorizonWind = Param(model.Wind,model.hh_periods,within=NonNegativeReals,mutable=True)
 model.HorizonNuc = Param(model.Nuc,model.hh_periods,within=NonNegativeReals,mutable=True)
-
 
 # #Must run resources
 # model.Must = Param(model.buses,within=NonNegativeReals)
@@ -126,10 +134,10 @@ model.HorizonNuc = Param(model.Nuc,model.hh_periods,within=NonNegativeReals,muta
 model.mwh = Var(model.Generators,model.HH_periods, within=NonNegativeReals,initialize=0)
 
 #1 if unit is on in hour i, otherwise 0
-model.on = Var(model.Dispatchable,model.HH_periods, within=NonNegativeReals, initialize=0)
+model.on = Var(model.Dispatchable,model.HH_periods, within=Binary, initialize=0)
 
 #1 if unit is switching on in hour i, otherwise 0
-model.switch = Var(model.Dispatchable,model.HH_periods, within=NonNegativeReals,initialize=0)
+model.switch = Var(model.Dispatchable,model.HH_periods, within=Binary,initialize=0)
 
 # #Amount of spining reserve offered by an unit in each hour
 # model.srsv = Var(model.Generators,model.HH_periods, within=NonNegativeReals,initialize=0)
@@ -140,6 +148,14 @@ model.switch = Var(model.Dispatchable,model.HH_periods, within=NonNegativeReals,
 # slack variables
 model.S = Var(model.buses,model.hh_periods, within=NonNegativeReals,initialize=0)
 
+#Battery variables
+model.bat_discharge = Var(model.Batteries, model.HH_periods, within=NonNegativeReals, initialize=0)
+model.bat_charge = Var(model.Batteries, model.HH_periods, within=NonNegativeReals, initialize=0)
+model.bat_SoC = Var(model.Batteries, model.HH_periods, within=NonNegativeReals, initialize=0)
+
+#Battery Binary Variables
+model.bat_dis_on = Var(model.Batteries,model.HH_periods, within=Binary, initialize=0)
+model.bat_charge_on = Var(model.Batteries,model.HH_periods, within=Binary, initialize=0)
 
 # transmission line variables 
 model.Flow= Var(model.lines,model.hh_periods)
@@ -156,19 +172,19 @@ model.DummyFlow = Var(model.lines,model.hh_periods,initialize=0)
 ######================Objective function=============########
 
 def SysCost(model):
+  
     fixed = sum(model.no_load[j]*model.on[j,i] for i in model.hh_periods for j in model.Dispatchable)
     starts = sum(model.st_cost[j]*model.switch[j,i] for i in model.hh_periods for j in model.Dispatchable)
-    coal = sum(model.mwh[j,i]*(model.heat_rate[j]*12.62 + model.var_om[j]) for i in model.hh_periods for j in model.Coal)  
     oil = sum(model.mwh[j,i]*(model.heat_rate[j]*11.97 + model.var_om[j]) for i in model.hh_periods for j in model.Oil)
     gas = sum(model.mwh[j,i]*(model.heat_rate[j]*3.18 + model.var_om[j]) for i in model.hh_periods for j in model.Gas)
     slack = sum(model.S[z,i]*10000 for i in model.hh_periods for z in model.buses)
     solar = sum(model.mwh[j,i]*.01 for i in model.hh_periods for j in model.Solar)
-    powerflow = sum(model.DummyFlow[l,i]*0.01 for l in model.lines for i in model.hh_periods)	
+    wind = sum(model.mwh[j,i]*.01 for i in model.hh_periods for j in model.Wind)
+    powerflow_cost = sum(model.DummyFlow[l,i]*0.01 for l in model.lines for i in model.hh_periods)
     
-    return coal + oil + gas + slack + fixed + starts + solar + powerflow
+    return oil + gas + slack + fixed + starts + solar + wind + powerflow_cost
 
 model.SystemCost = Objective(rule=SysCost, sense=minimize)
-
 
 
 ######=================================================########
@@ -176,6 +192,29 @@ model.SystemCost = Objective(rule=SysCost, sense=minimize)
 ######=================================================########
 
 #####========== Logical Constraint =========#############
+# Switch is 1 if unit is turned on in current period
+def SwitchCon(model,j,i):
+    return model.switch[j,i] >= 1 - model.on[j,i-1] - (1 - model.on[j,i])
+model.SwitchConstraint = Constraint(model.Dispatchable,model.hh_periods,rule = SwitchCon)
+
+
+# ######========== Up/Down Time Constraint =========#############
+# #Min Up time
+def MinUp(model,j,i,k):
+    if i > 0 and k > i and k < min(i+model.minup[j]-1,model.HorizonHours):
+        return model.on[j,i] - model.on[j,i-1] <= model.on[j,k]
+    else: 
+        return Constraint.Skip
+model.MinimumUp = Constraint(model.Dispatchable,model.HH_periods,model.HH_periods,rule=MinUp)
+
+# ##Min Down time
+def MinDown(model,j,i,k):
+    if i > 0 and k > i and k < min(i+model.mindn[j]-1,model.HorizonHours):
+        return model.on[j,i-1] - model.on[j,i] <= 1 - model.on[j,k]
+    else:
+        return Constraint.Skip
+model.MinimumDown = Constraint(model.Dispatchable,model.HH_periods,model.HH_periods,rule=MinDown)
+
 
 #####==========Ramp Rate Constraints =========#############
 def Ramp1(model,j,i):
@@ -201,14 +240,25 @@ def MaxC(model,j,i):
     return model.mwh[j,i]  <= model.on[j,i] * model.maxcap[j] 
 model.MaxCap= Constraint(model.Dispatchable,model.hh_periods,rule=MaxC)
 
+# def MaxC(model,j,i):
+#     return model.mwh[j,i]  <=  model.maxcap[j] 
+# model.MaxCap= Constraint(model.Dispatchable,model.hh_periods,rule=MaxC)
+
 
 def MinC(model,j,i):
     return model.mwh[j,i] >= model.on[j,i] * model.mincap[j]
 model.MinCap= Constraint(model.Dispatchable,model.hh_periods,rule=MinC)
 
 
-#Max capacity constraints on hydropower 
-def HydroC(model,j,i):
+# #Max capacity constraints on domestic hydropower 
+# def HydroC(model,j,i):
+#     daily = sum(model.mwh[j,i] for i in model.hh_periods)
+#     return  daily <= model.HorizonHydro[j]    
+# model.HydroConstraint= Constraint(model.Hydro,model.hh_periods,rule=HydroC)
+
+
+#Max capacity constraints on hydro
+def HydroC(model,j,i): 
     return  model.mwh[j,i] <= model.HorizonHydro[j,i]    
 model.HydroConstraint= Constraint(model.Hydro,model.hh_periods,rule=HydroC)
 
@@ -217,11 +267,52 @@ def SolarC(model,j,i):
     return  model.mwh[j,i] <= model.HorizonSolar[j,i]    
 model.SolarConstraint= Constraint(model.Solar,model.hh_periods,rule=SolarC)
 
+#Max capacity constraints on wind
+def WindC(model,j,i): 
+    return  model.mwh[j,i] <= model.HorizonWind[j,i]    
+model.WindConstraint= Constraint(model.Wind,model.hh_periods,rule=WindC)
+
 #Max capacity constraints on nuclear
 def NucC(model,j,i): 
     return  model.mwh[j,i] <= model.HorizonNuc[j,i]    
 model.NucConstraint= Constraint(model.Nuc,model.hh_periods,rule=NucC)
 
+#####=========== Storage Constraints ============##########
+
+#SoC Constraint, state of charge is always <= the battery's capacity
+def Battery1(model,j,i):
+    SoC = model.bat_SoC[j,i]
+    Cap = model.bat_cap[j]
+    return SoC <= Cap
+model.BatConstraint1 = Constraint(model.Batteries,model.hh_periods,rule=Battery1)
+
+#SoC Power Balance Constraint, keeps state of charge in balance after charging and discharging
+def Battery2(model,j,i):
+    SoC = model.bat_SoC[j,i]
+    SoC_tm1 = model.bat_SoC[j,i-1]
+    Charge = model.bat_charge[j,i]
+    Discharge = model.bat_discharge[j,i]
+    return SoC == SoC_tm1 + Charge*model.bat_eff[j] - Discharge
+model.BatConstraint2 = Constraint(model.Batteries, model.hh_periods, rule=Battery2)
+
+#Rate of Charge Constraint, total charge in one time step <= charge rate per hour
+def Battery3(model,j,i):
+    Charge = model.bat_charge[j,i]
+    return Charge <= model.bat_RoC[j] #* model.on[j,i]
+model.BatConstraint3 = Constraint(model.Batteries, model.hh_periods, rule=Battery3)
+
+#Rate of Discharge Constraint, total discharge in one time step <= discharge rate per hour
+def Battery4(model,j,i):
+    Discharge = model.bat_discharge[j,i]
+    return Discharge <= model.bat_RoD[j] #* model.on[j,i]
+model.BatConstraint4 = Constraint(model.Batteries, model.hh_periods, rule=Battery4)
+
+#Battery Binary Constraint, Cannot be Charging and Discharging in the same time step
+def Battery5(model,j,i):
+    On = model.bat_dis_on[j,i]
+    Off = model.bat_charge_on[j,i]
+    return On + Off <= 1
+model.BatConstraint5 = Constraint(model.Batteries, model.hh_periods, rule=Battery5)
 
 ######=================================================########
 ######               Segment B.11.1                    ########
@@ -231,8 +322,10 @@ def Nodal_Balance(model,z,i):
     power_flow = sum(model.Flow[l,i]*model.LinetoBusMap[l,z] for l in model.lines)   
     gen = sum(model.mwh[j,i]*model.BustoUnitMap[j,z] for j in model.Generators)    
     slack = model.S[z,i]
+    store = sum(model.bat_charge[j,i]*model.BustoStoMap[j,z] for j in model.Batteries) #define esto
+    discharge = sum(model.bat_discharge[j,i]*model.BustoStoMap[j,z] for j in model.Batteries)
     # must_run = model.Must[z] 
-    return gen + slack - power_flow == model.HorizonDemand[z,i] #must run
+    return gen + slack + discharge - power_flow == model.HorizonDemand[z,i] + store #must run
 model.Node_Constraint = Constraint(model.buses,model.hh_periods,rule=Nodal_Balance)
 
 def Flow_line(model,l,i):
@@ -245,13 +338,12 @@ def Theta_bus(model,i):
 model.ThetaB_Constraint = Constraint(model.hh_periods,rule=Theta_bus)
 
 def FlowUP_line(model,l,i): 
-    return  model.Flow[l,i] <= model.HorizonLineLimit[l,i] #model.FlowLim[l] #*model.HorizonOutages[l,i]
+    return  model.Flow[l,i] <= model.HorizonLineLimit[l,i]
 model.FlowU_Constraint = Constraint(model.lines,model.hh_periods,rule=FlowUP_line)
 
 def FlowLow_line(model,l,i):
-    return  -1*model.Flow[l,i] <= model.HorizonLineLimit[l,i] #model.FlowLim[l] #*model.HorizonOutages[l,i]
+    return  -1*model.Flow[l,i] <= model.HorizonLineLimit[l,i]
 model.FlowLL_Constraint = Constraint(model.lines,model.hh_periods,rule=FlowLow_line)
-
 
 ######=================================================########
 ######               Segment B.13                      ########

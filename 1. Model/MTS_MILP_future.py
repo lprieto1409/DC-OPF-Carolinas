@@ -176,9 +176,9 @@ def SysCost(model):
   
     fixed = sum(model.no_load[j]*model.on[j,i] for i in model.hh_periods for j in model.Dispatchable)
     starts = sum(model.st_cost[j]*model.switch[j,i] for i in model.hh_periods for j in model.Dispatchable)
-    coal = sum(model.mwh[j,i]*(model.heat_rate[j]*1.51 + model.var_om[j]) for i in model.hh_periods for j in model.Coal)  
-    oil = sum(model.mwh[j,i]*(model.heat_rate[j]*10 + model.var_om[j]) for i in model.hh_periods for j in model.Oil)
-    gas = sum(model.mwh[j,i]*(model.heat_rate[j]*3.39 + model.var_om[j]) for i in model.hh_periods for j in model.Gas)
+    coal = sum(model.mwh[j,i]*(model.heat_rate[j]*12.62 + model.var_om[j]) for i in model.hh_periods for j in model.Coal)  
+    oil = sum(model.mwh[j,i]*(model.heat_rate[j]*11.97 + model.var_om[j]) for i in model.hh_periods for j in model.Oil)
+    gas = sum(model.mwh[j,i]*(model.heat_rate[j]*3.18 + model.var_om[j]) for i in model.hh_periods for j in model.Gas)
     slack = sum(model.S[z,i]*10000 for i in model.hh_periods for z in model.buses)
     solar = sum(model.mwh[j,i]*.01 for i in model.hh_periods for j in model.Solar)
     wind = sum(model.mwh[j,i]*.01 for i in model.hh_periods for j in model.Wind)
